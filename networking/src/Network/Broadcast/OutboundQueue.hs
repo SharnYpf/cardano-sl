@@ -12,6 +12,7 @@
   * IERs_V2.md
 -------------------------------------------------------------------------------}
 
+{-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE GADTs                     #-}
@@ -89,8 +90,12 @@ import           Control.Exception (Exception, SomeException, catch,
                      displayException, finally, mask_, throwIO)
 import           Control.Lens
 import           Control.Monad
+import qualified Data.Aeson as A
+import qualified Data.Aeson.Encoding.Internal as A
+import qualified Data.Aeson.Types as A
 import           Data.Either (rights)
 import           Data.Foldable (fold)
+import qualified Data.HashMap.Strict as HMS
 import           Data.List (intercalate, sortOn)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -103,6 +108,7 @@ import qualified Data.Text as T
 import           Data.Time
 import           Data.Typeable (typeOf)
 import           Formatting (Format, sformat, shown, string, (%))
+import           GHC.Generics hiding (prec)
 import qualified System.Metrics as Monitoring
 import           System.Metrics.Counter (Counter)
 import qualified System.Metrics.Counter as Counter
@@ -1341,7 +1347,26 @@ flush OutQ{..} = do
 
 -- | Maximum size for a bucket (if limited)
 data MaxBucketSize = BucketSizeUnlimited | BucketSizeMax Int
-  deriving (Show, Eq)
+  deriving (Show, Generic, Eq)
+
+instance A.ToJSON MaxBucketSize where
+  toEncoding BucketSizeUnlimited =
+    A.pairs $ A.pairStr "maxSubscrs" A.null_
+  toEncoding (BucketSizeMax bSize) =
+    A.pairs $ A.pairStr "maxSubscrs" (A.int bSize)
+
+instance A.FromJSON MaxBucketSize where
+  parseJSON (A.Object o)
+      | HMS.member "maxSubscrs" o = do
+            maxBsV <- o A..:? "maxSubscrs"
+            case maxBsV of
+              Just size -> pure $ BucketSizeMax size
+              Nothing   -> pure BucketSizeUnlimited
+  parseJSON invalid = A.typeMismatch "MaxBucketSize" invalid
+
+--maybeBucketSize :: Maybe Int -> MaxBucketSize
+--maybeBucketSize Nothing  = BucketSizeUnlimited
+--maybeBucketSize (Just n) = BucketSizeMax n
 
 exceedsBucketSize :: Int -> MaxBucketSize -> Bool
 exceedsBucketSize _ BucketSizeUnlimited = False
