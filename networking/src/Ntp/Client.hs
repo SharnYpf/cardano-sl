@@ -175,7 +175,7 @@ sendLoop cli addrs = do
             -- after @'updateStatus'@ @'ntpStatus'@ is guaranteed to be
             -- different from @'NtpSyncPending'@, now we can wait until it was
             -- changed back to @'NtpSyncPending'@ to force a request.
-            forceRequest
+            waitForRequest
         )
         (\a -> do
             -- send packets and wait until end of poll delay
@@ -204,7 +204,8 @@ sendLoop cli addrs = do
                     retry
             logDebug "collected all responses"
 
-        forceRequest =
+        -- Wait for a request to force an ntp check.
+        waitForRequest =
             atomically $ do
                 status <- readTVar $ ncStatus cli
                 check (status == NtpSyncPending)
