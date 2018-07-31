@@ -59,7 +59,8 @@ instance Exception CreateWalletError
 -------------------------------------------------------------------------------}
 
 -- | Creates a new HD 'Wallet'.
-createHdWallet :: PassiveWallet
+createHdWallet
+             :: PassiveWallet
              -> Mnemonic nat
              -- ^ The set of words (i.e the mnemonic) to generate the initial seed.
              -- See <https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#From_mnemonic_to_seed>

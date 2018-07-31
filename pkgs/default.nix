@@ -17887,6 +17887,7 @@ servant-swagger-ui-core
 servant-swagger-ui-redoc
 sqlite-simple
 sqlite-simple-errors
+stm
 swagger2
 text
 time

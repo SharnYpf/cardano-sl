@@ -8,9 +8,9 @@ module Cardano.Wallet.WalletLayer.Kernel
 
 import           Universum
 
+import qualified Control.Concurrent.STM as STM
 import           Control.Lens (to)
 import           Data.Coerce (coerce)
-import           Data.Default (def)
 import           Data.Maybe (fromJust)
 import           Data.Time.Units (Second)
 import           Formatting (build, sformat)
@@ -41,7 +41,6 @@ import           Cardano.Wallet.Kernel.CoinSelection.FromGeneric
                      (CoinSelectionOptions (..), ExpenseRegulation,
                      InputGrouping, newOptions)
 
-import qualified Cardano.Wallet.Kernel.BIP39 as BIP39
 import           Pos.Core (Address, Coin, decodeTextAddress, mkCoin)
 import qualified Pos.Core as Core
 import           Pos.Core.Chrono (OldestFirst (..))
@@ -66,38 +65,25 @@ bracketPassiveWallet
     -> (PassiveWalletLayer n -> Kernel.PassiveWallet -> m a) -> m a
 bracketPassiveWallet logFunction keystore rocksDB f =
     Kernel.bracketPassiveWallet logFunction keystore rocksDB $ \w -> do
-
-      -- Create the wallet worker and its communication endpoint `invoke`.
-      bracket (liftIO $ Actions.forkWalletWorker $ Actions.WalletActionInterp
-                 { Actions.applyBlocks  =  \blunds ->
-                     Kernel.applyBlocks w $
-                         OldestFirst (mapMaybe blundToResolvedBlock (toList (getOldestFirst blunds)))
-                 , Actions.switchToFork = \_ _ -> logFunction Debug "<switchToFork>"
-                 , Actions.emit         = logFunction Debug
-                 }
-              ) (\invoke -> liftIO (invoke Actions.Shutdown))
-              $ \invoke -> do
-                  -- TODO (temporary): build a sample wallet from a backup phrase
-                  _ <- liftIO $ do
-                    Kernel.createHdWallet w
-                                          (def @(BIP39.Mnemonic 12))
-                                          emptyPassphrase
-                                          assuranceLevel
-                                          walletName
-
-                  f (passiveWalletLayer w invoke) w
-
+      let wai = Actions.WalletActionInterp
+                 { Actions.applyBlocks = \blunds ->
+                     Kernel.applyBlocks w
+                        (OldestFirst (mapMaybe blundToResolvedBlock
+                           (toList (getOldestFirst blunds))))
+                 , Actions.switchToFork = \_ _ ->
+                     logFunction Debug "<switchToFork>"
+                 , Actions.emit = logFunction Debug }
+      Actions.withWalletWorker wai $ \invoke -> do
+         f (passiveWalletLayer w invoke) w
   where
-    -- TODO consider defaults
-    walletName       = HD.WalletName "(new wallet)"
-    assuranceLevel   = HD.AssuranceLevelNormal
-
     -- | TODO(ks): Currently not implemented!
     passiveWalletLayer :: Kernel.PassiveWallet
-                       -> (Actions.WalletAction Blund -> IO ())
+                       -> (Actions.WalletAction Blund -> STM ())
                        -> PassiveWalletLayer n
     passiveWalletLayer wallet invoke =
-        PassiveWalletLayer
+        let invokeIO :: forall m'. MonadIO m' => Actions.WalletAction Blund -> m' ()
+            invokeIO = liftIO . STM.atomically . invoke
+        in PassiveWalletLayer
             { _pwlCreateWallet   =
                 \(V1.NewWallet (V1.BackupPhrase mnemonic) mbSpendingPassword v1AssuranceLevel v1WalletName operation) -> do
                     liftIO $ limitExecutionTimeTo (30 :: Second) CreateWalletTimeLimitReached $ do
@@ -166,8 +152,8 @@ bracketPassiveWallet logFunction keystore rocksDB f =
                                      Left  err     -> return (Left $ CreateAddressError err)
             , _pwlGetAddresses   = error "Not implemented!"
 
-            , _pwlApplyBlocks    = liftIO . invoke . Actions.ApplyBlocks
-            , _pwlRollbackBlocks = liftIO . invoke . Actions.RollbackBlocks
+            , _pwlApplyBlocks    = invokeIO . Actions.ApplyBlocks
+            , _pwlRollbackBlocks = invokeIO . Actions.RollbackBlocks
             }
 
     -- The use of the unsafe constructor 'UnsafeRawResolvedBlock' is justified
